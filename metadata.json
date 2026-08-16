@@ -1,0 +1,8 @@
+{
+  "name": "Remix Zoya Assistant",
+  "description": "A real-time, background-running voice assistant named Zoya using Gemini Live.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
