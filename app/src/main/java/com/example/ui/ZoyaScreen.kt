@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -105,9 +106,14 @@ fun HomeScreen(onNavigateToChat: () -> Unit) {
         androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         if (permissions[android.Manifest.permission.RECORD_AUDIO] == true) {
-            val intent = Intent(context, ZoyaForegroundService::class.java)
-            ContextCompat.startForegroundService(context, intent)
-            serviceStarted = true
+            try {
+                val intent = Intent(context, ZoyaForegroundService::class.java)
+                ContextCompat.startForegroundService(context, intent)
+                serviceStarted = true
+            } catch (e: Exception) {
+                Log.e("ZoyaScreen", "Failed to start foreground service", e)
+                android.widget.Toast.makeText(context, "Failed to start service: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+            }
         } else {
             android.widget.Toast.makeText(context, "Microphone permission is required!", android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -232,19 +238,29 @@ fun HomeScreen(onNavigateToChat: () -> Unit) {
                                 val hasMic = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
                                 val hasContacts = ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED
                                 val hasPhone = ContextCompat.checkSelfPermission(context, android.Manifest.permission.CALL_PHONE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                val hasNotif = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                } else true
                                 
-                                if (hasMic && hasContacts && hasPhone) {
-                                    val intent = Intent(context, ZoyaForegroundService::class.java)
-                                    ContextCompat.startForegroundService(context, intent)
-                                    serviceStarted = true
+                                if (hasMic && hasContacts && hasPhone && hasNotif) {
+                                    try {
+                                        val intent = Intent(context, ZoyaForegroundService::class.java)
+                                        ContextCompat.startForegroundService(context, intent)
+                                        serviceStarted = true
+                                    } catch (e: Exception) {
+                                        Log.e("ZoyaScreen", "Failed to start service", e)
+                                        android.widget.Toast.makeText(context, "Error starting Zoya: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                                    }
                                 } else {
-                                    permissionLauncher.launch(
-                                        arrayOf(
-                                            android.Manifest.permission.RECORD_AUDIO,
-                                            android.Manifest.permission.READ_CONTACTS,
-                                            android.Manifest.permission.CALL_PHONE
-                                        )
+                                    val neededPerms = mutableListOf(
+                                        android.Manifest.permission.RECORD_AUDIO,
+                                        android.Manifest.permission.READ_CONTACTS,
+                                        android.Manifest.permission.CALL_PHONE
                                     )
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        neededPerms.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                                    }
+                                    permissionLauncher.launch(neededPerms.toTypedArray())
                                 }
                             }
                         ) {

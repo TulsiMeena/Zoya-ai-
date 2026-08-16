@@ -89,14 +89,16 @@ class ZoyaForegroundService : Service() {
             liveSessionManager = LiveSessionManager(this, toolEngine, onAudioOut, onInterruptOut)
 
             createNotificationChannel()
+            val notification = createNotification()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
-                    startForeground(1, createNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                    startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
                 } catch (e: Exception) {
-                    try { startForeground(1, createNotification()) } catch(e: Exception) { }
+                    Log.e("ZoyaService", "Error starting microphone foreground service", e)
+                    try { startForeground(1, notification) } catch(e2: Exception) { Log.e("ZoyaService", "Fallback startForeground failed", e2) }
                 }
             } else {
-                try { startForeground(1, createNotification()) } catch(e: Exception) { }
+                try { startForeground(1, notification) } catch(e: Exception) { Log.e("ZoyaService", "startForeground failed", e) }
             }
 
             scope.launch {
@@ -191,14 +193,8 @@ class ZoyaForegroundService : Service() {
             
             Log.i("ZoyaDiagnostic", "Starting microphone recording. bufSize=$finalBuf")
 
-            val ctx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                createAttributionContext("zoya_audio")
-            } else {
-                this
-            }
             audioRecord = AudioRecord.Builder()
-                .setContext(ctx)
-                .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
                 .setAudioFormat(
                     AudioFormat.Builder()
                         .setSampleRate(sampleRate)
@@ -284,7 +280,17 @@ class ZoyaForegroundService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        return START_STICKY
+        val notification = createNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            } catch (e: Exception) {
+                try { startForeground(1, notification) } catch (e2: Exception) {}
+            }
+        } else {
+            try { startForeground(1, notification) } catch (e: Exception) {}
+        }
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -329,9 +335,10 @@ class ZoyaForegroundService : Service() {
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, "ZOYA_CHANNEL")
-            .setContentTitle("Zoya is listening...")
-            .setContentText("Background assistant active.")
-            .setSmallIcon(R.mipmap.ic_launcher_round)
+            .setContentTitle("Zoya is active")
+            .setContentText("Listening in background...")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }

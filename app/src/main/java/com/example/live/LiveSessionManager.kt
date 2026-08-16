@@ -379,7 +379,7 @@ class LiveSessionManager(
     private fun sendSetupMessage(ws: WebSocket) {
         val setupMsg = buildJsonObject {
             putJsonObject("setup") {
-                put("model", "models/gemini-2.5-flash-native-audio-latest")
+                put("model", "models/gemini-2.0-flash-exp")
                 putJsonObject("generationConfig") {
                     putJsonArray("responseModalities") { add("AUDIO") }
                     putJsonObject("speechConfig") {
