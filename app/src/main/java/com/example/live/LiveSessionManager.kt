@@ -163,18 +163,10 @@ class LiveSessionManager(
             add(buildJsonObject {
                 put("name", "getSimCardInfo")
                 put("description", "Check how many active SIM cards the device has.")
-                putJsonObject("parameters") {
-                    put("type", "OBJECT")
-                    putJsonObject("properties") {}
-                }
             })
             add(buildJsonObject {
                 put("name", "openQuickSettings")
                 put("description", "Pull down the quick settings / components panel (toggles for wifi, bluetooth, etc).")
-                putJsonObject("parameters") {
-                    put("type", "OBJECT")
-                    putJsonObject("properties") {}
-                }
             })
             add(buildJsonObject {
                 put("name", "clickTextOnScreen")
@@ -193,10 +185,6 @@ class LiveSessionManager(
             add(buildJsonObject {
                 put("name", "openNotificationPanel")
                 put("description", "Pull down the notification bar / status bar to view notifications.")
-                putJsonObject("parameters") {
-                    put("type", "OBJECT")
-                    putJsonObject("properties") {}
-                }
             })
             add(buildJsonObject {
                 put("name", "toggleTorch")
@@ -259,14 +247,13 @@ class LiveSessionManager(
         }
         
         Log.i("ZoyaDiagnostic", "Connecting to Gemini Live API...")
-        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$apiKey"
+        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
         val request = Request.Builder().url(url).build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i("ZoyaDiagnostic", "WebSocket connection OPENED successfully.")
-                addMessage("WebSocket Opened")
-                isSetupComplete = false
+                addMessage("Connected to Gemini Live. Initializing...")
                 sendSetupMessage(webSocket)
                 _zoyaState.value = ZoyaState.LISTENING
             }
@@ -285,16 +272,18 @@ class LiveSessionManager(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val errorBody = response?.body?.string() ?: "No body"
                 Log.e("ZoyaDiagnostic", "WebSocket ERROR: ${t.message}, Response: $errorBody", t)
-                addMessage("WebSocket Error: ${t.message}. Details: $errorBody")
+                addMessage("Connection error: ${t.message}")
                 _zoyaState.value = ZoyaState.IDLE
                 this@LiveSessionManager.webSocket = null
+                isSetupComplete = false
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.i("ZoyaDiagnostic", "WebSocket CLOSED. Code: $code, Reason: $reason")
-                addMessage("WebSocket Closed: $reason")
+                addMessage("Connection closed: $reason")
                 _zoyaState.value = ZoyaState.IDLE
                 this@LiveSessionManager.webSocket = null
+                isSetupComplete = false
             }
         })
     }
@@ -349,7 +338,7 @@ class LiveSessionManager(
     }
     
     fun sendAudioData(pcmData: ShortArray, length: Int) {
-        if (webSocket == null || !isSetupComplete || _zoyaState.value == ZoyaState.IDLE) {
+        if (webSocket == null || _zoyaState.value == ZoyaState.IDLE) {
             return
         }
         
@@ -412,32 +401,39 @@ class LiveSessionManager(
         Log.d("LiveSessionManager", "Server msg: $text")
         try {
             val jsonMsg = json.parseToJsonElement(text).jsonObject
-            // DEBUUGING: show keys on UI
-            addMessage("Server says: ${jsonMsg.keys}")
             
-            if (jsonMsg.containsKey("setupComplete")) {
+            // Check setup complete in both camelCase and snake_case
+            val isSetupDone = jsonMsg.containsKey("setupComplete") || jsonMsg.containsKey("setup_complete")
+            if (isSetupDone) {
                 isSetupComplete = true
-                addMessage("Server says: Setup Complete")
+                Log.i("ZoyaDiagnostic", "Gemini Live Setup Completed successfully.")
+                addMessage("Connected! Initializing conversation...")
                 sendInitialPrompt(webSocket!!)
             }
-            if (jsonMsg.containsKey("serverContent")) {
-                val serverContent = jsonMsg["serverContent"]?.jsonObject
-                val modelTurn = serverContent?.get("modelTurn")?.jsonObject
+
+            // Check serverContent / server_content
+            val serverContent = jsonMsg["serverContent"]?.jsonObject ?: jsonMsg["server_content"]?.jsonObject
+            if (serverContent != null) {
+                val modelTurn = serverContent["modelTurn"]?.jsonObject ?: serverContent["model_turn"]?.jsonObject
                 
-                if (serverContent?.get("interrupted")?.jsonPrimitive?.content == "true" || serverContent?.get("interrupted")?.jsonPrimitive?.booleanOrNull == true) {
+                val isInterrupted = serverContent["interrupted"]?.jsonPrimitive?.booleanOrNull == true ||
+                                    serverContent["interrupted"]?.jsonPrimitive?.content == "true"
+                if (isInterrupted) {
                     onInterrupt()
                 }
                 
-                modelTurn?.get("parts")?.jsonArray?.forEach { partElement ->
+                val parts = modelTurn?.get("parts")?.jsonArray
+                parts?.forEach { partElement ->
                     val part = partElement.jsonObject
                     
-                    if (part.containsKey("inlineData")) {
-                       val dataBase64 = part["inlineData"]?.jsonObject?.get("data")?.jsonPrimitive?.content
-                       if (dataBase64 != null) {
-                           _zoyaState.value = ZoyaState.SPEAKING
-                           val rawBytes = Base64.decode(dataBase64, Base64.NO_WRAP)
-                           onAudioOut(rawBytes)
-                       }
+                    val inlineData = part["inlineData"]?.jsonObject ?: part["inline_data"]?.jsonObject
+                    if (inlineData != null) {
+                        val dataBase64 = inlineData["data"]?.jsonPrimitive?.content
+                        if (dataBase64 != null) {
+                            _zoyaState.value = ZoyaState.SPEAKING
+                            val rawBytes = Base64.decode(dataBase64, Base64.NO_WRAP)
+                            onAudioOut(rawBytes)
+                        }
                     }
 
                     if (part.containsKey("text")) {
@@ -448,14 +444,19 @@ class LiveSessionManager(
                     }
                 }
                 
-                if (serverContent?.containsKey("turnComplete") == true && serverContent["turnComplete"]?.jsonPrimitive?.content == "true") {
+                val isTurnComplete = serverContent["turnComplete"]?.jsonPrimitive?.booleanOrNull == true ||
+                                     serverContent["turnComplete"]?.jsonPrimitive?.content == "true" ||
+                                     serverContent["turn_complete"]?.jsonPrimitive?.booleanOrNull == true ||
+                                     serverContent["turn_complete"]?.jsonPrimitive?.content == "true"
+                if (isTurnComplete) {
                     _zoyaState.value = ZoyaState.LISTENING
                 }
             }
             
-            if (jsonMsg.containsKey("toolCall")) {
-                val toolCallObj = jsonMsg["toolCall"]?.jsonObject
-                val functionCalls = toolCallObj?.get("functionCalls")?.jsonArray
+            // Check toolCall / tool_call
+            val toolCallObj = jsonMsg["toolCall"]?.jsonObject ?: jsonMsg["tool_call"]?.jsonObject
+            if (toolCallObj != null) {
+                val functionCalls = toolCallObj["functionCalls"]?.jsonArray ?: toolCallObj["function_calls"]?.jsonArray
                 
                 functionCalls?.forEach { callElement ->
                     val callObj = callElement.jsonObject
@@ -463,6 +464,7 @@ class LiveSessionManager(
                     val name = callObj["name"]?.jsonPrimitive?.content ?: ""
                     val args = callObj["args"]?.jsonObject ?: buildJsonObject { }
                     
+                    addMessage("Action: Executing $name")
                     executeToolAndRespond(id, name, args)
                 }
             }
